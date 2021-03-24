@@ -10,14 +10,6 @@ import time
 %matplotlib inline
 
 
-#def proj_A(x):
-#    hp, hn, vp, vn = fht(x)
-
-
-#def inv_A(hp, hn, vp, vn):
-#    return ifht(hp, hn, vp, vn)
-
-
 #encoding: utf-8
 from __future__ import division
 import numpy as np
@@ -193,7 +185,6 @@ def fast_calc_grad1(Y, n=256, m=256):
     grad[idx1 - m] += -1 * ((Y[idx1] - Y[idx1 - m]) > 0) + 1 * ((Y[idx1] - Y[idx1 - m]) <= 0)
     grad[idx2] += 1 * ((Y[idx2] - Y[idx2 - 1]) > 0) - 1 * ((Y[idx2] - Y[idx2 - 1]) <= 0)
     grad[idx2 - 1] += -1 * ((Y[idx2] - Y[idx2 - 1]) > 0) + 1 * ((Y[idx2] - Y[idx2 - 1]) <= 0)
-    #print(grad.shape)
     return grad.reshape(-1, 1)
 
 
@@ -241,14 +232,18 @@ def plot_sino1(sino):
 
 
 def opt_SIRT1(b, Y, angles, det_row_count, det_col_count, n, m):
+    '''
+    Считает среднеквадратичную ошибку
+    '''
     hp, hn, vp, vn = sino_to_lino(b, np.linspace(0, np.pi, angles) / np.pi * 180, det_col_cout)
     hp1, hn1, vp1, vn1 = fht(Y.reshape(n, m))
     return np.linalg.norm(np.concatenate((hp - hp1, hn - hn1, vp - vp1, vn - vn1)))
-    #return np.linalg.norm(b - A.dot(Y))
 
 
 def opt_SIRT_reg1(Y, n, m, alpha):
-    #syst = np.linalg.norm(b - A.dot(Y))
+    '''
+    Считает значение TV-регуляризатора
+    '''
     Y = Y.reshape(-1)
     idx1 = np.arange(m, n * m)
     idx2 = np.arange(n * m).reshape(n, m).T[1:].reshape(-1)
@@ -256,38 +251,26 @@ def opt_SIRT_reg1(Y, n, m, alpha):
     return total_variation
 
 
-#def opt_SIRT_reg_mu1(A, b, Y, n, m, alpha, mu):
-#    syst = np.linalg.norm(b - A.dot(Y))
-#    Y = Y.reshape(-1)
-#    idx1 = np.arange(m, n * m)
-#    idx2 = np.arange(n * m).reshape(n, m).T[1:].reshape(-1)
-#    total_variation_mu = alpha * (np.sum(((Y[idx1] - Y[idx1 - m]) ** 2 + mu) ** 0.5) + np.sum(((Y[idx2] - Y[idx2 - 1]) ** 2 + mu) ** 0.5))
-#    return syst + total_variation_mu
-
-
 def grad_SIRT1(b, Y, angles, det_row_count, det_col_count, n, m):
-    #print("?????")
+    '''
+    Возвращает градиент от матрицы со среднеквадратичной ошибкой
+    '''
     hp, hn, vp, vn = fht(Y.reshape(n, m))
-    #print(hp, hn, vp, vn)
-    #print("*****")
     hp1, hn1, vp1, vn1 = sino_to_lino(b, np.linspace(0, np.pi, angles) / np.pi * 180, det_col_count)
-    #print("&&&&&")
     x = ifht(hp1 - hp, hn1 - hn, vp1 - vp, vn1 - vn)
-    #print("@@@@@")
     x = -x[::-1][::-1]
     return x.reshape(-1, 1)
-    #return -backproj_matr.dot(b - A.dot(Y))
 
 
 def grad_SIRT_reg1(Y, n, m, alpha):
     return alpha * fast_calc_grad1(Y, n, m)
 
 
-#def grad_SIRT_reg_mu1(backproj_matr, A, b, Y, n, m, alpha, mu):
-#    return -backproj_matr.dot(b - A.dot(Y)) + alpha * fast_calc_grad_mu(Y, mu, n, m)
-
-
 def find_optimal_lambda_SIRT1(b, Y, angles, det_row_count, det_col_count, n, m):
+    '''
+     Ищет оптимальный коэффициент в методе наискорейшего спуска для среднеквадратичной ошибки
+     Использует тернарный поиск
+    '''
     l = -1000
     r = 1000
     grad1 = grad_SIRT1(b, Y, angles, det_row_count, det_col_count, n, m)
@@ -298,16 +281,10 @@ def find_optimal_lambda_SIRT1(b, Y, angles, det_row_count, det_col_count, n, m):
     for i in range(40):
         m1 = l + (r - l) / 3
         m2 = r - (r - l) / 3
-        #grad1 = grad_SIRT1(b, Y, n, m)
-        #val1 = opt_SIRT1(b, Y - m1 * grad1, n, m)
-        #grad2 = grad_SIRT1(b, Y, n, m)
-        #val2 = opt_SIRT1(b, Y - m2 * grad1, n, m)
         val1 = np.linalg.norm(np.concatenate((hp - (hp1 - m1 * hp2), hn - (hn1 - m1 * hn2), 
                                               vp - (vp1 - m1 * vp2), vn - (vn1 - m1 * vn2))))
         val2 = np.linalg.norm(np.concatenate((hp - (hp1 - m2 * hp2), hn - (hn1 - m2 * hn2), 
                                               vp - (vp1 - m2 * vp2), vn - (vn1 - m2 * vn2))))
-        #val1 += opt_SIRT_reg1(Y - m1 * grad1, n, m, alpha)
-        #val2 += opt_SIRT_reg1(Y - m2 * grad1, n, m, alpha)
         if val1 < val2:
             r = m2
         else:
@@ -316,6 +293,10 @@ def find_optimal_lambda_SIRT1(b, Y, angles, det_row_count, det_col_count, n, m):
 
 
 def find_optimal_lambda_SIRT_reg1(b, Y, angles, det_row_count, det_col_count, n, m, alpha):
+    '''
+    Ищет оптимальный коэффициент в методе наискорейшего спуска, применному к TV-regularization problem
+    Использует тернарный поиск
+    '''
     l = -1000
     r = 1000
     grad1 = grad_SIRT1(b, Y, angles, det_row_count, det_col_count, n, m) + grad_SIRT_reg1(Y, n, m, alpha)
@@ -331,11 +312,6 @@ def find_optimal_lambda_SIRT_reg1(b, Y, angles, det_row_count, det_col_count, n,
                                               vp - (vp1 - m2 * vp2), vn - (vn1 - m2 * vn2)))) ** 2
         val1 += opt_SIRT_reg1(Y - m1 * grad1, n, m, alpha)
         val2 += opt_SIRT_reg1(Y - m2 * grad1, n, m, alpha)
-        
-        #grad1 = grad_SIRT_reg(backproj_matr, A, b, Y, n, m, alpha)
-        #val1 = opt_SIRT_reg(A, b, Y - m1 * grad1, n, m, alpha)
-        #grad2 = grad_SIRT_reg(backproj_matr, A, b, Y, n, m, alpha)
-        #val2 = opt_SIRT_reg(A, b, Y - m2 * grad2, n, m, alpha)
         if val1 < val2:
             r = m2
         else:
@@ -343,28 +319,11 @@ def find_optimal_lambda_SIRT_reg1(b, Y, angles, det_row_count, det_col_count, n,
     return l
 
 
-#def find_optimal_lambda_SIRT_reg_mu1(backproj_matr, A, b, Y, n, m, alpha, mu):
-#    l = -1000
-#    r = 1000
-#    for i in range(40):
-#        m1 = l + (r - l) / 3
-#        m2 = r - (r - l) / 3
-#        grad1 = grad_SIRT_reg_mu(backproj_matr, A, b, Y, n, m, alpha, mu)
-#        val1 = opt_SIRT_reg_mu(A, b, Y - m1 * grad1, n, m, alpha, mu)
-#        grad2 = grad_SIRT_reg_mu(backproj_matr, A, b, Y, n, m, alpha, mu)
-#        val2 = opt_SIRT_reg_mu(A, b, Y - m2 * grad2, n, m, alpha, mu)
-#        if val1 < val2:
-#            r = m2
-#        else:
-#            l = m1
-#    return l
-
-
 def SIRT1(b, angles, det_row_count, det_col_count, n=256, m=256, iter=200, threshold=1e-4, show_plots=True):
     '''
     params:
-    A - матрица системы линейных уравнений(sparse-matrix)
     b - вектор проекций(sparse-matrix)
+    angles - количество углов
     n, m - размер изображения
     iter - количество итераций
     return:
@@ -390,11 +349,11 @@ def SIRT1(b, angles, det_row_count, det_col_count, n=256, m=256, iter=200, thres
     return x
 
 
-def SIRT_reg1(b, angles, det_row_count, det_col_count, n=256, m=256, alpha=11, iter=200, threshold=1e-4, show_plots=True):
+def SIRT_reg1(b, angles, det_row_count, det_col_count, n=256, m=256, alpha=1, iter=200, threshold=1e-4, show_plots=True):
     '''
     params:
-    A - матрица системы линейных уравнений(sparse-matrix)
     b - вектор проекций(sparse-matrix)
+    angles - кол-во углов 
     n, m - размер изображения
     alpha - коэффициент регуляризации
     iter - количество итераций
@@ -417,50 +376,6 @@ def SIRT_reg1(b, angles, det_row_count, det_col_count, n=256, m=256, alpha=11, i
     show_img(x, iter, 'SIRT-reg')
     plt.show()
     print('Время работы SIRT с TV-регуляризацией: {} секунд'.format(end - start))
-    return x
-
-
-def SIRT_reg_mu1(A, b, n=256, m=256, alpha=0.01, mu=0.01, iter=200, threshold=1e-4, show_plots=False):
-    '''
-    params:
-    A - матрица системы линейных уравнений(sparse-matrix)
-    b - вектор проекций(sparse-matrix)
-    n, m - размер изображения
-    alpha - коэффициент регуляризации
-    mu - коэффициент сглажиания
-    iter - количество итераций
-    return:
-    вектор пикселей изображения
-    '''
-    start = time.time()
-    C1 = np.array(1 / scipy.sparse.csr_matrix.sum(A, axis=0)).reshape(-1)
-    R1 = np.array(1 / scipy.sparse.csr_matrix.sum(A, axis=1)).reshape(-1)
-    elem = [np.arange(C1.shape[0]), np.arange(C1.shape[0])]
-    elem1 = [range(R1.shape[0]), range(R1.shape[0])]
-    C = scipy.sparse.csr_matrix((C1, (elem[0], elem[1])), shape=(len(C1), len(C1)))
-    R = scipy.sparse.csr_matrix((R1, (elem1[0], elem1[1])), shape=(len(R1), len(R1)))
-    b = b.reshape(-1, 1)
-    x = np.zeros((n * m, 1))
-    backproj_matr = (C.dot(A.T)).dot(R)
-    #x = np.zeros((256 * 256))
-        #x += scipy.sparse.csc_matrix.dot(scipy.sparse.csc_matrix.dot(scipy.sparse.csc_matrix.dot(C, A.T), R), b - scipy.sparse.csc_matrix.dot(A, scipy.sparse.csc_matrix(x)))
-    #x += -alpha * calc_grad_mu(x, 0.1)
-    for i in range(iter):
-        #lamb = np.argmin(np.linspace(-1, 1, 1000))
-        y = x
-        coef = find_optimal_lambda_SIRT_reg_mu(backproj_matr, A, b, x, n, m, alpha, mu)
-        #backproj_matr = (C.dot(A.T)).dot(R)
-        x = x + coef * backproj_matr.dot(b - A.dot(x))
-        x += coef * (-alpha) * fast_calc_grad_mu(x, mu)
-        if np.linalg.norm(y - x) < threshold:
-            break
-        if i % 10 == 0 and show_plots:
-            show_img(x, i, 'SIRT-reg-mu')
-            plt.show()
-    end = time.time()
-    show_img(x, iter, 'SIRT-reg-mu')
-    plt.show()
-    print('Время работы SIRT с TV-регуляризацией и сглаживанием: {} секунд'.format(end - start))
     return x
 
 
@@ -534,5 +449,6 @@ def phantom_test1(angles=18, det_row_count=1, det_col_count=256, alpha=1, mu=0.1
     plt.show()
     #SIRT_libr(img)
     #SIRT1(b, angles, det_row_count, det_col_count)
-    SIRT_reg1(b, angles, det_row_count, det_col_count)
-    #SIRT_reg_mu(A, b)
+    SIRT_reg1(b, angles, det_row_count, det_col_count, alpha=alpha)
+    #SIRT_reg_mu(A, b, alpha=alpha, mu=mu)
+    
