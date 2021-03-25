@@ -1,4 +1,3 @@
-
 import numpy as np
 import matplotlib.pyplot as plt
 from skimage.color import rgb2gray
@@ -10,6 +9,159 @@ import time
 
 %matplotlib inline
 
+
+def sino_to_lino(sino, ang, N, r=5):
+    """
+    Преобразование синограммы в четыре составляющих линограммы.  
+    :param sino: Исходная синограмма
+    :param ang: Углы измерения (в градусах)
+    :param N: Линейный размер реконструируемого изображения
+    :param r: Отклонение от границы сектора линогаммы, учитываемое при интерполяции 
+    данных
+    """
+    if r:
+        sino = np.pad(sino, ((0, 0), (r, r)), mode='reflect')
+        ang = np.hstack((-ang[r:0:-1], ang, -ang[-r::1]))
+        index_hp = (ang >= 45 - r) & (ang <= 90 + r)
+        index_hn = (ang >= 90 - r) & (ang <= 135 + r)
+        index_vp = (ang >= 0) & (ang <= 45 + r)
+        index_vn = (ang >= 135 - r) & (ang <= 180 + r)
+    else:
+        raise ValueError('r must be grate than 0, given {}'.format(r))
+    
+    pn = sino.shape[0]
+    r = np.arange(-pn // 2, pn // 2)
+
+    # hp
+    index = index_hp
+    sino_hp = sino[:, index]
+    sino_new = np.zeros((2 * N, sino_hp.shape[1]))
+    t = N / np.tan(np.deg2rad(ang[index]))
+    for j in np.arange(sino_hp.shape[1]):
+        sino_new[:, j] = np.interp(np.arange(-N, N), r * np.sqrt(t[j] ** 2 + N ** 2) / N + N / 2 - t[j] / 2 + 1,
+                                   sino_hp[:, j])
+    hp = np.zeros((2 * N, N))
+    for i in np.arange(2 * N):
+        hp[i - N, :] = np.interp(np.arange(0, N), t[::-1], sino_new[i, ::-1])
+
+    # hn
+    index = index_hn
+    sino_hn = sino[:, index]
+    sino_new = np.zeros((2 * N, sino_hn.shape[1]))
+    t = N / np.tan(np.deg2rad(ang[index]))
+    for j in np.arange(sino_hn.shape[1]):
+        sino_new[:, j] = np.interp(np.arange(-N, N), r * np.sqrt(t[j] ** 2 + N ** 2) / N - t[j] / 2 - N / 2 + 1,
+                                   sino_hn[:, j])
+    hn = np.zeros((2 * N, N))
+    for i in np.arange(2 * N):
+        hn[i, :] = np.interp(np.arange(0, N), -t, sino_new[i, :])
+
+    # vp
+    index = index_vp
+    sino_vp = sino[:, index]
+    sino_new = np.zeros((2 * N, sino_vp.shape[1]))
+    t = N * np.tan(np.deg2rad(ang[index]))
+    for j in np.arange(sino_vp.shape[1]):
+        sino_new[:, j] = np.interp(np.arange(-N, N), (r * np.sqrt(t[j] ** 2 + N ** 2) / N - N / 2 + t[j] / 2),
+                                   sino_vp[:, j])
+    vp = np.zeros((2 * N, N))
+    for i in np.arange(2 * N):
+        vp[i - N, :] = np.interp(np.arange(0, N), t, sino_new[i, :])
+    vp = vp[::-1, :]
+
+    # vn
+    index = index_vn
+    sino_vn = sino[:, index]
+    sino_new = np.zeros((2 * N, sino_vn.shape[1]))
+    t = N * np.tan(np.deg2rad(ang[index]))
+    for j in np.arange(sino_vn.shape[1]):
+        sino_new[:, j] = np.interp(np.arange(-N, N) + 1,
+                                   -(r * np.sqrt(t[j] ** 2 + N ** 2) / N + N / 2 + t[j] / 2)[::-1], sino_vn[:, j])
+    vn = np.zeros((2 * N, N))
+    for i in np.arange(2 * N):
+        vn[i, :] = np.interp(np.arange(0, N), -t[::-1], sino_new[i, ::-1])
+
+    k = 1 + np.arange(N) ** 2 / (N - 1) ** 2
+    return hp / k, hn / k, vp / k, vn / k
+
+
+def fht2(im, sign):
+    """
+    Вычислние быстрого преобразования Хафа для преимущественно горизонтальных прямых. Для нахождени БПХ для
+    преимущественно вертикальных прямых используется fht2(im.T, sign). Подробное описание
+    Ершов, Е. И., Терехин, А. П., & Николаев, Д. П. (2017).
+    Обобщение быстрого преобразования Хафа для трехмерных изображений.
+    Информационные процессы, 17(4), 294-308.
+    :param im: исходное изображение
+    :param sign: 1 для прямых с уклон вверх, -1 - для прямых с уклоном вниз
+    """
+    m, n = im.shape
+    n0 = int(np.round(n / 2))
+    if n < 2:
+        h = im
+    else:
+        h = mergeHT(fht2(im[:, 0:n0], sign), fht2(im[:, n0::], sign), sign)
+    return h
+
+
+def mergeHT(h0, h1, sign):
+    """
+    Вспомогательная функция вычисления БПХ.
+    """
+    m, n0 = h0.shape
+    n = 2 * n0
+    h = np.zeros((m, n))
+    r0 = (n0 - 1) / (n - 1)
+    for t in np.arange(n):
+        t0 = int(np.around(t * r0))
+        s = int(sign * (t - t0))
+        h[:, t] = h0[:, t0] + np.hstack((h1[s:m, t0], h1[0:s, t0]))
+    return h
+
+
+def fht(im):
+    """
+    Вычислние быстрого преобразования Хафа для всех четырех типов прямых. 
+    Подробное описание
+    Ершов, Е. И., Терехин, А. П., & Николаев, Д. П. (2017).
+    Важно! Для точного восстановления необходимо, чтобы Хаф-образы сожержали полные диапазон 
+    углов (t=-N..N-1), а не были рекурсивно замкнуты, как в случае применения функции fht2.
+    """
+    N = im.shape[0]
+
+    im_pad_h = np.pad(im, ((0, N), (0, 0)), mode='constant')
+    im_pad_v = np.pad(im, ((0, 0), (0, N)), mode='constant')
+    k = np.sqrt(1 + np.arange(N) ** 2 / (N - 1) ** 2)
+
+    hp = fht2(im_pad_h, 1)
+    hn = fht2(im_pad_h, -1)
+    vp = fht2(im_pad_v.T, 1)
+    vn = fht2(im_pad_v.T, -1)
+    return hp, hn, vp, vn
+
+
+def ifht(hp, hn, vp, vn):
+    """
+    Обратное проецирование с помощью БПХ. Входные данные в формате БПХ. Для применения к синограмме необходимо
+    предварительно выполнить смену координат и интерполяцию для приведения к нужной сетке.
+    (Ершов, Е. И., Терехин, А. П., & Николаев, Д. П. (2017).
+    Обобщение быстрого преобразования Хафа для трехмерных изображений.
+    Информационные процессы, 17(4), 294-308.)
+    Важно! Для точного восстановления необходимо, чтобы Хаф-образы сожержали полные диапазон 
+    углов (t=-N..N-1), а не были рекурсивно замкнуты, как в случае применения функции fht2.
+    :param hp: БПХ для преимущественно горизонтальных прямых с уклоном вверх
+    :param hn: БПХ для преимущественно горизонтальных прямых с уклоном вниз
+    :param vp: БПХ для преимущественно вертикальных прямых с уклоном вправо
+    :param vn: БПХ для преимущественно вертикальных прямых с уклоном влево
+    """
+    N = hp.shape[1]
+
+    hpi = fht2(hp, -1)
+    hni = fht2(hn, 1)
+    vpi = fht2(vp, -1).T
+    vni = fht2(vn, 1).T
+
+    return (hpi[:N, :N] + hni[:N, :N] + vpi[:N, :N] + vni[:N, :N]) / N
 
 def fast_calc_grad(Y, n=256, m=256):
     '''
@@ -28,30 +180,29 @@ def fast_calc_grad(Y, n=256, m=256):
     grad[idx1 - m] += -1 * ((Y[idx1] - Y[idx1 - m]) > 0) + 1 * ((Y[idx1] - Y[idx1 - m]) <= 0)
     grad[idx2] += 1 * ((Y[idx2] - Y[idx2 - 1]) > 0) - 1 * ((Y[idx2] - Y[idx2 - 1]) <= 0)
     grad[idx2 - 1] += -1 * ((Y[idx2] - Y[idx2 - 1]) > 0) + 1 * ((Y[idx2] - Y[idx2 - 1]) <= 0)
-    #print(grad.shape)
     return grad.reshape(-1, 1)
 
 
-def fast_calc_grad_mu(Y, mu=0.1, n=256, m=256):
+def grad_SIRT1(b, Y, angles, det_row_count, det_col_count, n, m):
     '''
-    params: 
-    Y - текущий вектор из пикселей изображения
-    n, m - размеры изображения
-    mu - коэффициент аппроксимации |x| ~ \sqrt(x^2 + mu)
-    return:
-    TV-regularization gradient
+    Возвращает градиент от матрицы со среднеквадратичной ошибкой
+    '''
+    hp, hn, vp, vn = fht(Y.reshape(n, m))
+    hp1, hn1, vp1, vn1 = sino_to_lino(b, angles / np.pi * 180, det_col_count)
+    x = ifht(hp1 - hp, hn1 - hn, vp1 - vp, vn1 - vn)
+    x = -x[::-1][::-1]
+    return x.reshape(-1, 1)
+
+
+def TV_SIRT_reg1(Y, n, m, alpha):
+    '''
+    Считает значение TV-регуляризатора
     '''
     Y = Y.reshape(-1)
-    grad = np.zeros(n * m)
     idx1 = np.arange(m, n * m)
     idx2 = np.arange(n * m).reshape(n, m).T[1:].reshape(-1)
-    abs_grad1 = (Y[idx1] - Y[idx1 - m]) / (((Y[idx1] - Y[idx1 - m]) ** 2 + mu) ** 0.5)
-    abs_grad2 = (Y[idx2] - Y[idx2 - 1]) / (((Y[idx2] - Y[idx2 - 1]) ** 2 + mu) ** 0.5)
-    grad[idx1] += (1 * ((Y[idx1] - Y[idx1 - m]) > 0) - 1 * ((Y[idx1] - Y[idx1 - m]) <= 0)) * abs_grad1
-    grad[idx1 - m] += (-1 * ((Y[idx1] - Y[idx1 - m]) > 0) + 1 * ((Y[idx1] - Y[idx1 - m]) <= 0)) * abs_grad1
-    grad[idx2] += (1 * ((Y[idx2] - Y[idx2 - 1]) > 0) - 1 * ((Y[idx2] - Y[idx2 - 1]) <= 0)) * abs_grad2
-    grad[idx2 - 1] += (-1 * ((Y[idx2] - Y[idx2 - 1]) > 0) + 1 * ((Y[idx2] - Y[idx2 - 1]) <= 0)) * abs_grad2
-    return grad.reshape(-1, 1)
+    total_variation = alpha * (np.sum(np.abs(Y[idx1] - Y[idx1 - m])) + np.sum(np.abs(Y[idx2] - Y[idx2 - 1])))
+    return total_variation
 
 
 def show_img(x, iter, method, n=256, m=256):
@@ -70,135 +221,64 @@ def show_img(x, iter, method, n=256, m=256):
 
 def plot_sino(sino):
     '''
-    Visulise sinogram
+    Visualise sinogram
     '''
     plt.imshow(sino, cmap='gray')
 
 
-def opt_SIRT(A, b, Y, n, m):
-    return np.linalg.norm(b - A.dot(Y))
-
-
-def opt_SIRT_reg(A, b, Y, n, m, alpha):
-    syst = np.linalg.norm(b - A.dot(Y)) ** 2
+def TV_SIRT_reg(A, b, Y, n, m, alpha):
     Y = Y.reshape(-1)
     idx1 = np.arange(m, n * m)
     idx2 = np.arange(n * m).reshape(n, m).T[1:].reshape(-1)
     total_variation = alpha * (np.sum(np.abs(Y[idx1] - Y[idx1 - m])) + np.sum(np.abs(Y[idx2] - Y[idx2 - 1])))
-    return syst + total_variation
+    return total_variation
 
 
-def opt_SIRT_reg_mu(A, b, Y, n, m, alpha, mu):
-    syst = np.linalg.norm(b - A.dot(Y))
-    Y = Y.reshape(-1)
-    idx1 = np.arange(m, n * m)
-    idx2 = np.arange(n * m).reshape(n, m).T[1:].reshape(-1)
-    total_variation_mu = alpha * (np.sum(((Y[idx1] - Y[idx1 - m]) ** 2 + mu) ** 0.5) + np.sum(((Y[idx2] - Y[idx2 - 1]) ** 2 + mu) ** 0.5))
-    return syst + total_variation_mu
-
-
-def grad_SIRT(backproj_matr, A, b, Y, n, m):
-    return -backproj_matr.dot(b - A.dot(Y))
-
-
-def grad_SIRT_reg(backproj_matr, A, b, Y, n, m, alpha):
-    return backproj_matr.dot(A.dot(Y) - b) + alpha * fast_calc_grad(Y, n, m)
-
-
-def grad_SIRT_reg_mu(backproj_matr, A, b, Y, n, m, alpha, mu):
-    return backproj_matr.dot(A.dot(Y) - b) + alpha * fast_calc_grad_mu(Y, mu, n, m)
-
-
-def find_optimal_lambda_SIRT(backproj_matr, A, b, Y, n, m):
-    l = -1000
-    r = 1000
-    for i in range(40):
-        m1 = l + (r - l) / 3
-        m2 = r - (r - l) / 3
-        grad1 = grad_SIRT(backproj_matr, A, b, Y, n, m)
-        val1 = opt_SIRT(A, b, Y - m1 * grad1, n, m)
-        grad2 = grad_SIRT(backproj_matr, A, b, Y, n, m)
-        val2 = opt_SIRT(A, b, Y - m2 * grad2, n, m)
-        if val1 < val2:
-            r = m2
-        else:
-            l = m1
-    return l
-
-
-def find_optimal_lambda_SIRT_reg(backproj_matr, A, b, Y, n, m, alpha):
-    l = -1000
-    r = 1000
-    for i in range(40):
-        m1 = l + (r - l) / 3
-        m2 = r - (r - l) / 3
-        grad1 = grad_SIRT_reg(backproj_matr, A, b, Y, n, m, alpha)
-        val1 = opt_SIRT_reg(A, b, Y - m1 * grad1, n, m, alpha)
-        grad2 = grad_SIRT_reg(backproj_matr, A, b, Y, n, m, alpha)
-        val2 = opt_SIRT_reg(A, b, Y - m2 * grad2, n, m, alpha)
-        if val1 < val2:
-            r = m2
-        else:
-            l = m1
-    return l
-
-
-def find_optimal_lambda_SIRT_reg_mu(backproj_matr, A, b, Y, n, m, alpha, mu):
-    l = -1000
-    r = 1000
-    for i in range(40):
-        m1 = l + (r - l) / 3
-        m2 = r - (r - l) / 3
-        grad1 = grad_SIRT_reg_mu(backproj_matr, A, b, Y, n, m, alpha, mu)
-        val1 = opt_SIRT_reg_mu(A, b, Y - m1 * grad1, n, m, alpha, mu)
-        grad2 = grad_SIRT_reg_mu(backproj_matr, A, b, Y, n, m, alpha, mu)
-        val2 = opt_SIRT_reg_mu(A, b, Y - m2 * grad2, n, m, alpha, mu)
-        if val1 < val2:
-            r = m2
-        else:
-            l = m1
-    return l
-
-
-def SIRT(A, b, n=256, m=256, iter=200, threshold=1e-4, show_plots=True):
+def find_optimal_lambda_SIRT_reg1(b, Y, angles, det_row_count, det_col_count, n, m, alpha):
     '''
-    params:
-    A - матрица системы линейных уравнений(sparse-matrix)
-    b - вектор проекций(sparse-matrix)
-    n, m - размер изображения
-    iter - количество итераций
-    return:
-    вектор пикселей изображения, 
+    Ищет оптимальный коэффициент в методе наискорейшего спуска, применному к TV-regularization problem
+    Использует тернарный поиск
     '''
-    start = time.time()
-    C1 = np.array(1 / scipy.sparse.csr_matrix.sum(A, axis=0)).reshape(-1)
-    R1 = np.array(1 / scipy.sparse.csr_matrix.sum(A, axis=1)).reshape(-1)
-    elem = [np.arange(C1.shape[0]), np.arange(C1.shape[0])]
-    elem1 = [range(R1.shape[0]), range(R1.shape[0])]
-    C = scipy.sparse.csr_matrix((C1, (elem[0], elem[1])), shape=(len(C1), len(C1)))
-    R = scipy.sparse.csr_matrix((R1, (elem1[0], elem1[1])), shape=(len(R1), len(R1)))
-    b = b.reshape(-1, 1)
-    x = np.zeros((n * m, 1))
-    #backproj_matr = (C.dot(A.T)).dot(R)
-    backproj_matr = A.T
-    #x = np.zeros((256 * 256))
-    for i in range(iter):
-        y = x
-        #backproj_matr = (C.dot(A.T)).dot(R)
-        x = x + find_optimal_lambda_SIRT(backproj_matr, A, b, x, n, m) * backproj_matr.dot(b - A.dot(x))
-        if np.linalg.norm(y - x) < threshold:
-            break
-        if i % 10 == 0 and show_plots:
-            show_img(x, i, 'SIRT')
-            plt.show()
-    end = time.time()
-    show_img(x, iter, 'SIRT')
-    plt.show()
-    print('Время работы SIRT: {} секунд'.format(end - start))
-    return x
+    l = -1000
+    r = 1000
+    grad1 = grad_SIRT1(b, Y, angles, det_row_count, det_col_count, n, m) + alpha * fast_calc_grad(Y, n, m)
+    hp, hn, vp, vn = sino_to_lino(b, angles / np.pi * 180, det_col_count)
+    hp1, hn1, vp1, vn1 = fht(Y.reshape(n, m))
+    hp2, hn2, vp2, vn2 = fht(grad1.reshape(n, m))
+    for i in range(40):
+        m1 = l + (r - l) / 3
+        m2 = r - (r - l) / 3
+        val1 = np.linalg.norm(np.concatenate((hp - (hp1 - m1 * hp2), hn - (hn1 - m1 * hn2), 
+                                              vp - (vp1 - m1 * vp2), vn - (vn1 - m1 * vn2)))) ** 2
+        val2 = np.linalg.norm(np.concatenate((hp - (hp1 - m2 * hp2), hn - (hn1 - m2 * hn2), 
+                                              vp - (vp1 - m2 * vp2), vn - (vn1 - m2 * vn2)))) ** 2
+        val1 += alpha * TV_SIRT_reg1(Y - m1 * grad1, n, m, alpha)
+        val2 += alpha * TV_SIRT_reg1(Y - m2 * grad1, n, m, alpha)
+        if val1 < val2:
+            r = m2
+        else:
+            l = m1
+    return l
 
 
-def SIRT_reg(A, b, n=256, m=256, alpha=0.02, iter=200, threshold=1e-4, show_plots=True):
+def find_optimal_lambda_SIRT_reg(A, b, Y, n, m, alpha):
+    l = -1000
+    r = 1000
+    grad = A.T.dot(A.dot(Y) - b) + alpha * fast_calc_grad(Y, n, m)
+    #grad = grad_SIRT_reg(backproj_matr, A, b, Y, n, m, alpha)
+    for i in range(40):
+        m1 = l + (r - l) / 3
+        m2 = r - (r - l) / 3
+        val1 =  np.linalg.norm(b - A.dot(Y - m1 * grad)) ** 2 + TV_SIRT_reg(A, b, Y - m1 * grad, n, m, alpha)
+        val2 =  np.linalg.norm(b - A.dot(Y - m2 * grad)) ** 2 + TV_SIRT_reg(A, b, Y - m2 * grad, n, m, alpha)
+        if val1 < val2:
+            r = m2
+        else:
+            l = m1
+    return l
+
+
+def SIRT_reg(A, b, angles=None, det_row_count=None, det_col_count=None, alpha=0, iter=200, threshold=1e-4, show_plots=True):
     '''
     params:
     A - матрица системы линейных уравнений(sparse-matrix)
@@ -209,31 +289,27 @@ def SIRT_reg(A, b, n=256, m=256, alpha=0.02, iter=200, threshold=1e-4, show_plot
     return:
     вектор пикселей изображения
     '''
+    n = m = b.shape[1]
+    print(n, m)
     start = time.time()
-    C1 = np.array(1 / scipy.sparse.csr_matrix.sum(A, axis=0)).reshape(-1)
-    R1 = np.array(1 / scipy.sparse.csr_matrix.sum(A, axis=1)).reshape(-1)
-    elem = [np.arange(C1.shape[0]), np.arange(C1.shape[0])]
-    elem1 = [range(R1.shape[0]), range(R1.shape[0])]
-    C = scipy.sparse.csr_matrix((C1, (elem[0], elem[1])), shape=(len(C1), len(C1)))
-    R = scipy.sparse.csr_matrix((R1, (elem1[0], elem1[1])), shape=(len(R1), len(R1)))
-    b = b.reshape(-1, 1)
     x = np.zeros((n * m, 1))
-    #backproj_matr = (C.dot(A.T)).dot(R)
-    backproj_matr = A.T
-    #x = np.zeros((256 * 256))
-        #x += scipy.sparse.csc_matrix.dot(scipy.sparse.csc_matrix.dot(scipy.sparse.csc_matrix.dot(C, A.T), R), b - scipy.sparse.csc_matrix.dot(A, scipy.sparse.csc_matrix(x)))
-    #x += -alpha * calc_grad_mu(x, 0.1)
     for i in range(iter):
-        #backproj_matr = (C.dot(A.T)).dot(R)
         y = x.copy()
-        coef = find_optimal_lambda_SIRT_reg(backproj_matr, A, b, x, n, m, alpha)
-        #x = x + coef * backproj_matr.dot(b - A.dot(x)) + coef * -alpha * fast_calc_grad(x)
-        x -= (coef) * grad_SIRT_reg(backproj_matr, A, b, x, n, m, alpha)
-        #x += coef * -alpha * fast_calc_grad(x)
+        if A is not None:
+            b = b.reshape(-1, 1)
+            coef = find_optimal_lambda_SIRT_reg(A, b, x, n, m, alpha)
+            x -= coef * (A.T.dot(A.dot(x) - b) + alpha * fast_calc_grad(x, n, m))
+        else:
+            coef = find_optimal_lambda_SIRT_reg1(b.T, x, angles, det_row_count, det_col_count, n, m, alpha)
+            x -= coef * (grad_SIRT1(b.T, x, angles, det_row_count, det_col_count, n, m) + 
+                         alpha * fast_calc_grad(x, n, m))
         if np.linalg.norm(y - x) < threshold:
             break
         if i % 1 == 0 and show_plots:
-            show_img(x, i, 'SIRT-reg')
+            if A is not None:
+                show_img(x, i, 'SIRT-reg-sino')
+            else:
+                show_img(x[::-1, ::-1], i, 'SIRT-reg-breidy')
             plt.show()
     end = time.time()
     show_img(x, iter, 'SIRT-reg')
@@ -242,51 +318,7 @@ def SIRT_reg(A, b, n=256, m=256, alpha=0.02, iter=200, threshold=1e-4, show_plot
     return x
 
 
-def SIRT_reg_mu(A, b, n=256, m=256, alpha=0.01, mu=0.01, iter=200, threshold=1e-4, show_plots=False):
-    '''
-    params:
-    A - матрица системы линейных уравнений(sparse-matrix)
-    b - вектор проекций(sparse-matrix)
-    n, m - размер изображения
-    alpha - коэффициент регуляризации
-    mu - коэффициент сглажиания
-    iter - количество итераций
-    return:
-    вектор пикселей изображения
-    '''
-    start = time.time()
-    C1 = np.array(1 / scipy.sparse.csr_matrix.sum(A, axis=0)).reshape(-1)
-    R1 = np.array(1 / scipy.sparse.csr_matrix.sum(A, axis=1)).reshape(-1)
-    elem = [np.arange(C1.shape[0]), np.arange(C1.shape[0])]
-    elem1 = [range(R1.shape[0]), range(R1.shape[0])]
-    C = scipy.sparse.csr_matrix((C1, (elem[0], elem[1])), shape=(len(C1), len(C1)))
-    R = scipy.sparse.csr_matrix((R1, (elem1[0], elem1[1])), shape=(len(R1), len(R1)))
-    b = b.reshape(-1, 1)
-    x = np.zeros((n * m, 1))
-    backproj_matr = (C.dot(A.T)).dot(R)
-    #x = np.zeros((256 * 256))
-        #x += scipy.sparse.csc_matrix.dot(scipy.sparse.csc_matrix.dot(scipy.sparse.csc_matrix.dot(C, A.T), R), b - scipy.sparse.csc_matrix.dot(A, scipy.sparse.csc_matrix(x)))
-    #x += -alpha * calc_grad_mu(x, 0.1)
-    for i in range(iter):
-        #lamb = np.argmin(np.linspace(-1, 1, 1000))
-        y = x
-        coef = find_optimal_lambda_SIRT_reg_mu(backproj_matr, A, b, x, n, m, alpha, mu)
-        #backproj_matr = (C.dot(A.T)).dot(R)
-        x = x + coef * backproj_matr.dot(b - A.dot(x))
-        x += coef * (-alpha) * fast_calc_grad_mu(x, mu)
-        if np.linalg.norm(y - x) < threshold:
-            break
-        if i % 1 == 0 and show_plots:
-            show_img(x, i, 'SIRT-reg-mu')
-            plt.show()
-    end = time.time()
-    show_img(x, iter, 'SIRT-reg-mu')
-    plt.show()
-    print('Время работы SIRT с TV-регуляризацией и сглаживанием: {} секунд'.format(end - start))
-    return x
-
-
-def get_A_b(img, angles=18, det_row_count=1, det_col_count=256):
+def get_A_b(img, angles, det_row_count=1, det_col_count=256):
     '''
     Возвращает матрицу системы линейных уравнений
     params:
@@ -299,7 +331,6 @@ def get_A_b(img, angles=18, det_row_count=1, det_col_count=256):
     b - projection vector
     '''
     vol_geom = astra.create_vol_geom(img.shape[0], img.shape[1])
-    angles = np.linspace(0, np.pi, angles)
     proj_geom = astra.create_proj_geom('parallel', det_row_count, det_col_count, angles)
     proj_id = astra.create_projector('linear', proj_geom, vol_geom)
     matrix_id = astra.projector.matrix(proj_id)
@@ -318,12 +349,11 @@ def prepare_image(img, n, m):
     return img
 
 
-def SIRT_libr(img, angles=18, det_row_count=1, det_col_count=256):
+def SIRT_libr(img, angles, det_row_count=1, det_col_count=256):
     '''
     Стандартный библиотечный SIRT
     '''
     vol_geom = astra.create_vol_geom(img.shape[0], img.shape[1])
-    angles = np.linspace(0, np.pi, angles)
     proj_geom = astra.create_proj_geom('parallel', det_row_count, det_col_count, angles)
     proj_id = astra.create_projector('linear', proj_geom, vol_geom)
     sinogram_id, sino = astra.create_sino(img, proj_id)
@@ -343,10 +373,9 @@ def SIRT_libr(img, angles=18, det_row_count=1, det_col_count=256):
     print('Время работы SIRT из стандартной библиотеки: {} секунд'.format(end - start))
 
 
-def phantom_test(angles=18, det_row_count=1, det_col_count=256, alpha=40, mu=0.1, path='drive/MyDrive/Диплом/SheppLogan_Phantom.png'):
+def phantom_test(angles, det_row_count=1, det_col_count=256, alpha=0.1, mu=0.1, path='drive/MyDrive/Диплом/SheppLogan_Phantom.png'):
     img = Image.open(path) #path to image
     img = prepare_image(img, 256, 256)
-    print(img.min(), img.max())
     A, b = get_A_b(img, angles, det_row_count, det_col_count)
     plt.title('Фантом')
     plt.imshow(img, cmap='gray')
@@ -354,9 +383,9 @@ def phantom_test(angles=18, det_row_count=1, det_col_count=256, alpha=40, mu=0.1
     plt.title('Синограмма')
     plot_sino(b)
     plt.show()
-    #SIRT_libr(img)
-    #SIRT(A, b)
+    SIRT_libr(img, angles)
     SIRT_reg(A, b, alpha=alpha)
+    SIRT_reg(None, b, alpha=alpha, angles=angles, det_row_count=det_row_count, det_col_count=det_col_count)
     #SIRT_reg_mu(A, b)
 
-phantom_test(path="Phantom.png")
+phantom_test(path='Phantom.png', angles=np.linspace(0, np.pi, 18))
