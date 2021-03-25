@@ -363,10 +363,10 @@ def SIRT_reg1(b, angles, det_row_count, det_col_count, n=256, m=256, alpha=1, it
     start = time.time()
     x = np.zeros((n * m, 1))
     for i in range(iter):
-        y = x
+        y = x.copy()
         coef = find_optimal_lambda_SIRT_reg1(b.T, x, angles, det_row_count, det_col_count, n, m, alpha)
-        x = x - coef * grad_SIRT1(b.T, x, angles, det_row_count, det_col_count, n, m)
-        x = x + coef * (-alpha) * fast_calc_grad1(y)
+        x = x - coef * grad_SIRT1(b.T, x, angles, det_row_count, det_col_count, n, m)- coef * (alpha) * fast_calc_grad1(x)
+        #x = x - coef * (alpha) * fast_calc_grad1(y)
         if np.linalg.norm(y - x) < threshold:
             break
         if i % 1 == 0 and show_plots:
@@ -436,8 +436,8 @@ def SIRT_libr1(img, angles=18, det_row_count=1, det_col_count=256):
     print('Время работы SIRT из стандартной библиотеки: {} секунд'.format(end - start))
 
 
-def phantom_test1(angles=18, det_row_count=1, det_col_count=256, alpha=1, mu=0.1):
-    img = Image.open('drive/MyDrive/Диплом/SheppLogan_Phantom.png') #path to image
+def phantom_test1(angles=18, det_row_count=1, det_col_count=256, alpha=7, mu=0.1, path='drive/MyDrive/Диплом/SheppLogan_Phantom.png'):
+    img = Image.open(path) #path to image
     img = prepare_image1(img, 256, 256)
     print(img.min(), img.max())
     A, b = get_A_b(img, angles, det_row_count, det_col_count)
@@ -451,4 +451,5 @@ def phantom_test1(angles=18, det_row_count=1, det_col_count=256, alpha=1, mu=0.1
     #SIRT1(b, angles, det_row_count, det_col_count)
     SIRT_reg1(b, angles, det_row_count, det_col_count, alpha=alpha)
     #SIRT_reg_mu(A, b, alpha=alpha, mu=mu)
+phantom_test1(path="Phantom.png")
     
